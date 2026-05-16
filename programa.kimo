@@ -1,0 +1,45 @@
+INICIO:
+
+INI_VAR
+    A : ENT;
+    B : ENT;
+    C : ENT;
+    I : ENT;
+    TEXTO : CAD;
+FIN_VAR
+
+A = 5;
+B = 3;
+C = A + B;
+IMPRIMIR(C);
+
+C = A - B;
+IMPRIMIR(C);
+
+C = A * B;
+IMPRIMIR(C);
+
+C = A / B;
+IMPRIMIR(C);
+
+C = A % B;
+IMPRIMIR(C);
+
+C = A ^ B;
+IMPRIMIR(C);
+
+TEXTO = "HOLA KIMO";
+IMPRIMIR(TEXTO);
+
+LEER(A);
+IMPRIMIR(A);
+
+SI A > B ENTONCES
+    IMPRIMIR("A ES MAYOR");
+    IMPRIMIR(A);
+FIN
+
+MIENTRAS A > 0 HACER
+    IMPRIMIR(A);
+    A = A - 1;
+FINM
