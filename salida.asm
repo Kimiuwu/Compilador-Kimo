@@ -126,29 +126,6 @@ Inicio:
 	mov txt_C[4], 24h
 	IMPRIMIR txt_C+2
 	IMPRIMIR salto
-	mov ax, var_A
-	mov bx, ax
-	mov cx, var_B
-	mov ax, 1
-elevar_0:
-	cmp cx, 0
-	je fin_elevar_0
-	mul bx
-	dec cx
-	jmp elevar_0
-fin_elevar_0:
-	mov var_C, ax
-	mov ax, var_C
-	mov bx, 10
-	xor dx, dx
-	div bx
-	add al, '0'
-	add dl, '0'
-	mov txt_C[2], al
-	mov txt_C[3], dl
-	mov txt_C[4], 24h
-	IMPRIMIR txt_C+2
-	IMPRIMIR salto
 	lea si, cad_temp_0
 	lea di, var_TEXTO+2
 copiar_cadena_0:
