@@ -1,0 +1,622 @@
+import re
+import os
+
+
+class ErrorCompilacion(Exception):
+    pass
+
+
+class CompiladorKimo:
+    def __init__(self):
+        self.linea_actual = 1
+
+        self.macros_asm = []
+        self.data_asm = []
+        self.code_asm = []
+
+        # Tabla de símbolos mínima:
+        # clave = ID, valor = TIPO
+        self.tabla_simbolos = {}
+
+        # Tabla de errores en tiempo de edición:
+        # solo almacena código y línea
+        self.errores_detectados = []
+
+        self.en_bloque_variables = False
+        self.inicio_encontrado = False
+
+        self.pila_bloques = []
+        self.contador_ciclos = 0
+        self.contador_mensajes = 0
+
+        self.definir_tabla_errores()
+        self.definir_regex()
+        self.preparar_estructura_base()
+
+    # =========================================================
+    # TABLA DE ERRORES
+    # =========================================================
+
+    def definir_tabla_errores(self):
+        self.tabla_errores = {
+            "E000": "El archivo fuente no existe.",
+            "E001": "Instrucción desconocida.",
+            "E002": "Falta la instrucción INICIO:.",
+            "E003": "Falta cerrar el bloque de variables con FIN_VAR.",
+            "E004": "Existe un bloque SI o MIENTRAS sin cerrar.",
+            "E005": "Declaración inválida. Use la forma: ID : TIPO;",
+            "E006": "Variable ya declarada.",
+            "E007": "Variable no declarada.",
+            "E008": "Sintaxis inválida en IMPRIMIR.",
+            "E009": "Sintaxis inválida en LEER.",
+            "E010": "Sintaxis inválida en SI.",
+            "E011": "Sintaxis inválida en MIENTRAS.",
+            "E012": "FIN encontrado sin bloque SI abierto.",
+            "E013": "FINM encontrado sin ciclo MIENTRAS abierto.",
+            "E014": "Asignación inválida.",
+            "E015": "Tipo incompatible en asignación.",
+            "E016": "Expresión aritmética inválida. Use una operación simple: A = B + 5;",
+            "E017": "Operador aritmético inválido.",
+            "E018": "INICIO: ya fue declarado.",
+            "E019": "No se permiten instrucciones antes de INICIO:.",
+            "E020": "La declaración de variables debe estar dentro de INI_VAR y FIN_VAR."
+        }
+
+    def registrar_error(self, codigo):
+        self.errores_detectados.append({
+            "codigo": codigo,
+            "linea": self.linea_actual
+        })
+        raise ErrorCompilacion
+
+    def reportar_errores(self):
+        print("\n[REPORTE DE ERRORES]")
+
+        for error in self.errores_detectados:
+            codigo = error["codigo"]
+            linea = error["linea"]
+            descripcion = self.tabla_errores.get(codigo, "Error no registrado.")
+
+            print(f"Línea {linea} | {codigo} | {descripcion}")
+
+    # =========================================================
+    # EXPRESIONES REGULARES MODULARES
+    # =========================================================
+
+    def definir_regex(self):
+        # -------------------------
+        # Átomos léxicos base
+        # -------------------------
+
+        self.ID = r"[A-Z0-9a-z_-]+"
+        self.ENTERO = r"[+-]?[0-9]+"
+        self.CADENA = r'"[^"]*"'
+
+        self.TIPO = r"(?:ENT|FLOAT|CAD)"
+        self.OP_REL = r"(?:>=|<=|==|!=|>|<)"
+        self.OP_ARIT = r"(?:\+|-|\*|/|%)"
+
+        self.ESP = r"\s*"
+        self.ESP_OBL = r"\s+"
+
+        self.PA = r"\("
+        self.PC = r"\)"
+        self.PYC = r";"
+        self.DOSP = r":"
+        self.IGUAL = r"="
+
+        self.PR_INICIO = r"INICIO:"
+        self.PR_INI_VAR = r"INI_VAR"
+        self.PR_FIN_VAR = r"FIN_VAR"
+        self.PR_LEER = r"LEER"
+        self.PR_IMPRIMIR = r"IMPRIMIR"
+        self.PR_SI = r"SI"
+        self.PR_ENTONCES = r"ENTONCES"
+        self.PR_FIN = r"FIN"
+        self.PR_MIENTRAS = r"MIENTRAS"
+        self.PR_HACER = r"HACER"
+        self.PR_FINM = r"FINM"
+
+        self.OPERANDO_NUM = rf"(?:{self.ID}|{self.ENTERO})"
+        self.EXP_IMPRIMIBLE = rf"(?:{self.ID}|{self.ENTERO}|{self.CADENA})"
+
+        # -------------------------
+        # RegEx atómicas compiladas
+        # -------------------------
+
+        self.regex_id = re.compile(rf"^{self.ID}$")
+        self.regex_entero = re.compile(rf"^{self.ENTERO}$")
+        self.regex_cadena = re.compile(rf"^{self.CADENA}$")
+
+        # -------------------------
+        # Producciones de Kimo
+        # -------------------------
+
+        # <DECL> ::= <ID> : <TIPO> ;
+        self.regex_declaracion = re.compile(
+        rf"^{self.ESP}({self.ID}){self.ESP}{self.DOSP}{self.ESP}({self.TIPO}){self.ESP}{self.PYC}$"
+        )
+
+        # <ENTRADA> ::= LEER ( <ID> ) ;
+        self.regex_leer = re.compile(
+            rf"^{self.ESP}{self.PR_LEER}{self.ESP}{self.PA}{self.ESP}({self.ID}){self.ESP}{self.PC}{self.ESP}{self.PYC}$"
+        )
+
+        # <SALIDA> ::= IMPRIMIR ( <EXPRESION> ) ;
+        self.regex_imprimir = re.compile(
+            rf"^{self.ESP}{self.PR_IMPRIMIR}{self.ESP}{self.PA}{self.ESP}({self.EXP_IMPRIMIBLE}){self.ESP}{self.PC}{self.ESP}{self.PYC}$"
+        )
+
+        # <CONDICIONAL> ::= SI <EXPRESION> <OP_REL> <EXPRESION> ENTONCES
+        self.regex_si = re.compile(
+            rf"^{self.ESP}{self.PR_SI}{self.ESP_OBL}"
+            rf"({self.OPERANDO_NUM}){self.ESP}({self.OP_REL}){self.ESP}({self.OPERANDO_NUM})"
+            rf"{self.ESP_OBL}{self.PR_ENTONCES}$"
+        )
+
+        # <WHILE> ::= MIENTRAS <EXPRESION> <OP_REL> <EXPRESION> HACER
+        self.regex_mientras = re.compile(
+            rf"^{self.ESP}{self.PR_MIENTRAS}{self.ESP_OBL}"
+            rf"({self.OPERANDO_NUM}){self.ESP}({self.OP_REL}){self.ESP}({self.OPERANDO_NUM})"
+             rf"{self.ESP_OBL}{self.PR_HACER}$"
+        )
+
+        # <ASIGNACION> ::= <ID> = <EXPRESION> ;
+        self.regex_asignacion = re.compile(
+            rf"^{self.ESP}({self.ID}){self.ESP}{self.IGUAL}{self.ESP}(.+?){self.ESP}{self.PYC}$"
+        )
+
+        # Alcance evaluable:
+        # A = B;
+        # A = 5;
+        # A = B + 5;
+        self.regex_exp_num_simple = re.compile(
+            rf"^({self.OPERANDO_NUM})(?:{self.ESP}({self.OP_ARIT}){self.ESP}({self.OPERANDO_NUM}))?$"
+        )
+
+        self.saltos_inversos = {
+            ">": "JLE",
+            "<": "JGE",
+            ">=": "JL",
+            "<=": "JG",
+            "==": "JNE",
+            "!=": "JE"
+        }
+
+    # =========================================================
+    # ESTRUCTURA ASM
+    # =========================================================
+
+    def preparar_estructura_base(self):
+        self.macros_asm = [
+            "IMPRIMIR Macro Mensaje",
+            "   mov Ah, 09h",
+            "   mov Dx, offset Mensaje",
+            "   int 21h",
+            "EndM",
+            "",
+            "LEER Macro Entrada",
+            "   mov Ah, 0Ah",
+            "   mov Dx, offset Entrada",
+            "   int 21h",
+            "EndM",
+            ""
+        ]
+
+        self.data_asm = [
+            ".DATA",
+            "salto db 10,13,24h"
+        ]
+
+    # =========================================================
+    # UTILIDADES
+    # =========================================================
+
+    def es_id_valido(self, valor):
+        return valor != "" and self.regex_id.match(valor) is not None
+
+    def es_entero(self, valor):
+        return self.regex_entero.match(valor) is not None
+
+    def es_cadena(self, valor):
+        return self.regex_cadena.match(valor) is not None
+
+    def existe_variable(self, nombre):
+        return nombre in self.tabla_simbolos
+
+    def validar_variable(self, nombre):
+        if not self.existe_variable(nombre):
+            self.registrar_error("E007")
+
+    def tipo_variable(self, nombre):
+        self.validar_variable(nombre)
+        return self.tabla_simbolos[nombre]
+
+    def nombre_asm(self, nombre):
+        return f"var_{nombre}"
+
+    def nombre_txt(self, nombre):
+        return f"txt_{nombre}"
+
+    def operando_asm(self, valor):
+        if self.es_entero(valor):
+            return valor
+
+        self.validar_variable(valor)
+        return self.nombre_asm(valor)
+
+    # =========================================================
+    # GENERACIÓN DE CÓDIGO
+    # =========================================================
+
+    def agregar_inicio(self):
+        if self.inicio_encontrado:
+            self.registrar_error("E018")
+
+        self.inicio_encontrado = True
+
+    def declarar_variable(self, linea):
+        match = self.regex_declaracion.match(linea)
+
+        if not match:
+            self.registrar_error("E005")
+
+        nombre = match.group(1)
+        tipo = match.group(2)
+
+        if not self.es_id_valido(nombre):
+            self.registrar_error("E005")
+
+        if self.existe_variable(nombre):
+            self.registrar_error("E006")
+
+        self.tabla_simbolos[nombre] = tipo
+
+        if tipo == "ENT":
+            self.data_asm.append(f"{self.nombre_asm(nombre)} dw 0")
+            self.data_asm.append(f"{self.nombre_txt(nombre)} db 4, ?, 5 dup(24h)")
+
+        elif tipo == "FLOAT":
+            self.data_asm.append(f"{self.nombre_asm(nombre)} dw 0 ; FLOAT limitado")
+            self.data_asm.append(f"{self.nombre_txt(nombre)} db 4, ?, 5 dup(24h)")
+
+        elif tipo == "CAD":
+            self.data_asm.append(f"{self.nombre_asm(nombre)} db 100, ?, 100 dup(24h)")
+
+    def generar_imprimir(self, linea):
+        match = self.regex_imprimir.match(linea)
+
+        if not match:
+            self.registrar_error("E008")
+
+        expresion = match.group(1).strip()
+
+        if self.es_cadena(expresion):
+            nombre_msg = f"msg_{self.contador_mensajes}"
+            self.data_asm.append(f"{nombre_msg} db {expresion},24h")
+            self.code_asm.append(f"\tIMPRIMIR {nombre_msg}")
+            self.code_asm.append("\tIMPRIMIR salto")
+            self.contador_mensajes += 1
+
+        elif self.es_entero(expresion):
+            nombre_msg = f"msg_{self.contador_mensajes}"
+            self.data_asm.append(f'{nombre_msg} db "{expresion}",24h')
+            self.code_asm.append(f"\tIMPRIMIR {nombre_msg}")
+            self.code_asm.append("\tIMPRIMIR salto")
+            self.contador_mensajes += 1
+
+        elif self.es_id_valido(expresion):
+            self.validar_variable(expresion)
+            tipo = self.tipo_variable(expresion)
+
+            if tipo == "CAD":
+                self.code_asm.append(f"\tIMPRIMIR {self.nombre_asm(expresion)}+2")
+            else:
+                self.code_asm.append(f"\tIMPRIMIR {self.nombre_txt(expresion)}+2")
+
+            self.code_asm.append("\tIMPRIMIR salto")
+
+        else:
+            self.registrar_error("E008")
+
+    def generar_leer(self, linea):
+        match = self.regex_leer.match(linea)
+
+        if not match:
+            self.registrar_error("E009")
+
+        nombre = match.group(1)
+
+        if not self.es_id_valido(nombre):
+            self.registrar_error("E009")
+
+        self.validar_variable(nombre)
+        tipo = self.tipo_variable(nombre)
+
+        if tipo == "CAD":
+            self.code_asm.append(f"\tLEER {self.nombre_asm(nombre)}")
+            self.code_asm.append("\tIMPRIMIR salto")
+        else:
+            self.code_asm.append(f"\tLEER {self.nombre_txt(nombre)}")
+            self.code_asm.append(f"\tmov al, {self.nombre_txt(nombre)}[2]")
+            self.code_asm.append("\tsub al, 30h")
+            self.code_asm.append("\tmov ah, 0")
+            self.code_asm.append(f"\tmov {self.nombre_asm(nombre)}, ax")
+            self.generar_conversion_dos_digitos(
+                self.nombre_asm(nombre),
+                self.nombre_txt(nombre)
+            )
+            self.code_asm.append("\tIMPRIMIR salto")
+
+    def generar_conversion_dos_digitos(self, nombre_var, nombre_txt):
+        self.code_asm.append(f"\tmov ax, {nombre_var}")
+        self.code_asm.append("\tmov bx, 10")
+        self.code_asm.append("\txor dx, dx")
+        self.code_asm.append("\tdiv bx")
+        self.code_asm.append("\tadd al, '0'")
+        self.code_asm.append("\tadd dl, '0'")
+        self.code_asm.append(f"\tmov {nombre_txt}[2], al")
+        self.code_asm.append(f"\tmov {nombre_txt}[3], dl")
+        self.code_asm.append(f"\tmov {nombre_txt}[4], 24h")
+
+    def generar_comparacion(self, izq, operador, der, etiqueta_salida):
+        self.code_asm.append(f"\tmov ax, {self.operando_asm(izq)}")
+        self.code_asm.append(f"\tcmp ax, {self.operando_asm(der)}")
+        self.code_asm.append(f"\t{self.saltos_inversos[operador]} {etiqueta_salida}")
+
+    def generar_si(self, linea):
+        match = self.regex_si.match(linea)
+
+        if not match:
+            self.registrar_error("E010")
+
+        izq = match.group(1)
+        operador = match.group(2)
+        der = match.group(3)
+
+        etiqueta_fin = f"fin_if_{self.contador_ciclos}"
+        self.contador_ciclos += 1
+
+        self.generar_comparacion(izq, operador, der, etiqueta_fin)
+
+        self.pila_bloques.append({
+            "tipo": "SI",
+            "fin": etiqueta_fin
+        })
+
+    def cerrar_fin(self):
+        if not self.pila_bloques:
+            self.registrar_error("E012")
+
+        bloque = self.pila_bloques.pop()
+
+        if bloque["tipo"] != "SI":
+            self.registrar_error("E012")
+
+        self.code_asm.append(f"{bloque['fin']}:")
+
+    def generar_mientras(self, linea):
+        match = self.regex_mientras.match(linea)
+
+        if not match:
+            self.registrar_error("E011")
+
+        izq = match.group(1)
+        operador = match.group(2)
+        der = match.group(3)
+
+        etiqueta_inicio = f"while_{self.contador_ciclos}"
+        etiqueta_fin = f"fin_while_{self.contador_ciclos}"
+        self.contador_ciclos += 1
+
+        self.code_asm.append(f"{etiqueta_inicio}:")
+        self.generar_comparacion(izq, operador, der, etiqueta_fin)
+
+        self.pila_bloques.append({
+            "tipo": "MIENTRAS",
+            "inicio": etiqueta_inicio,
+            "fin": etiqueta_fin
+        })
+
+    def cerrar_finm(self):
+        if not self.pila_bloques:
+            self.registrar_error("E013")
+
+        bloque = self.pila_bloques.pop()
+
+        if bloque["tipo"] != "MIENTRAS":
+            self.registrar_error("E013")
+
+        self.code_asm.append(f"\tjmp {bloque['inicio']}")
+        self.code_asm.append(f"{bloque['fin']}:")
+
+    def generar_asignacion(self, linea):
+        match = self.regex_asignacion.match(linea)
+
+        if not match:
+            self.registrar_error("E014")
+
+        destino = match.group(1)
+        expresion = match.group(2).strip()
+
+        if not self.es_id_valido(destino):
+            self.registrar_error("E014")
+
+        self.validar_variable(destino)
+
+        tipo_destino = self.tipo_variable(destino)
+
+        if tipo_destino == "CAD":
+            if not self.es_cadena(expresion):
+                self.registrar_error("E015")
+
+            nombre_temp = f"cad_temp_{self.contador_mensajes}"
+            etiqueta = f"copiar_cadena_{self.contador_mensajes}"
+            self.contador_mensajes += 1
+
+            self.data_asm.append(f"{nombre_temp} db {expresion},24h")
+
+            self.code_asm.append(f"\tlea si, {nombre_temp}")
+            self.code_asm.append(f"\tlea di, {self.nombre_asm(destino)}+2")
+            self.code_asm.append(f"{etiqueta}:")
+            self.code_asm.append("\tmov al, [si]")
+            self.code_asm.append("\tmov [di], al")
+            self.code_asm.append("\tinc si")
+            self.code_asm.append("\tinc di")
+            self.code_asm.append("\tcmp al, 24h")
+            self.code_asm.append(f"\tjne {etiqueta}")
+            return
+
+        match_exp = self.regex_exp_num_simple.match(expresion)
+
+        if not match_exp:
+            self.registrar_error("E016")
+
+        op1 = match_exp.group(1)
+        operador = match_exp.group(2)
+        op2 = match_exp.group(3)
+
+        self.code_asm.append(f"\tmov ax, {self.operando_asm(op1)}")
+
+        if operador is not None:
+            if operador == "+":
+                self.code_asm.append(f"\tadd ax, {self.operando_asm(op2)}")
+
+            elif operador == "-":
+                self.code_asm.append(f"\tsub ax, {self.operando_asm(op2)}")
+
+            elif operador == "*":
+                self.code_asm.append(f"\tmov bx, {self.operando_asm(op2)}")
+                self.code_asm.append("\tmul bx")
+
+            elif operador == "/":
+                self.code_asm.append(f"\tmov bx, {self.operando_asm(op2)}")
+                self.code_asm.append("\txor dx, dx")
+                self.code_asm.append("\tdiv bx")
+
+            elif operador == "%":
+                self.code_asm.append(f"\tmov bx, {self.operando_asm(op2)}")
+                self.code_asm.append("\txor dx, dx")
+                self.code_asm.append("\tdiv bx")
+                self.code_asm.append("\tmov ax, dx")
+
+            else:
+                self.registrar_error("E017")
+
+        self.code_asm.append(f"\tmov {self.nombre_asm(destino)}, ax")
+        self.generar_conversion_dos_digitos(
+            self.nombre_asm(destino),
+            self.nombre_txt(destino)
+        )
+
+    # =========================================================
+    # CICLO PRINCIPAL
+    # =========================================================
+
+    def compilar(self, ruta_fuente, ruta_salida):
+        if not os.path.exists(ruta_fuente):
+            self.registrar_error("E000")
+
+        try:
+            with open(ruta_fuente, "r", encoding="utf-8") as archivo:
+                lineas = [linea.rstrip("\n") for linea in archivo.readlines()]
+
+            for linea in lineas:
+                linea_limpia = linea.strip()
+
+                if not linea_limpia or linea_limpia.startswith("//"):
+                    self.linea_actual += 1
+                    continue
+
+                partes = linea_limpia.split()
+                token_inicial = partes[0] if partes else ""
+
+                if token_inicial == "INICIO:":
+                    self.agregar_inicio()
+
+                elif not self.inicio_encontrado:
+                    self.registrar_error("E019")
+
+                elif token_inicial == "INI_VAR":
+                    self.en_bloque_variables = True
+
+                elif token_inicial == "FIN_VAR":
+                    self.en_bloque_variables = False
+
+                elif self.regex_declaracion.match(linea_limpia):
+                    if not self.en_bloque_variables:
+                        self.registrar_error("E020")
+                    self.declarar_variable(linea_limpia)
+
+                elif self.en_bloque_variables:
+                    self.registrar_error("E005")
+
+                elif self.regex_imprimir.match(linea_limpia):
+                    self.generar_imprimir(linea_limpia)
+
+                elif self.regex_leer.match(linea_limpia):
+                    self.generar_leer(linea_limpia)
+
+                elif self.regex_si.match(linea_limpia):
+                    self.generar_si(linea_limpia)
+
+                elif token_inicial == "FIN":
+                    self.cerrar_fin()
+
+                elif self.regex_mientras.match(linea_limpia):
+                    self.generar_mientras(linea_limpia)
+
+                elif token_inicial == "FINM":
+                    self.cerrar_finm()
+
+                elif self.regex_asignacion.match(linea_limpia):
+                    self.generar_asignacion(linea_limpia)
+
+                else:
+                    self.registrar_error("E001")
+
+                self.linea_actual += 1
+
+            if not self.inicio_encontrado:
+                self.registrar_error("E002")
+
+            if self.en_bloque_variables:
+                self.registrar_error("E003")
+
+            if self.pila_bloques:
+                self.registrar_error("E004")
+
+            self.escribir_asm(ruta_salida)
+
+        except ErrorCompilacion:
+            self.reportar_errores()
+
+    def escribir_asm(self, ruta_salida):
+        asm_final = []
+
+        asm_final.extend(self.macros_asm)
+        asm_final.append(".MODEL SMALL")
+        asm_final.extend(self.data_asm)
+        asm_final.append(".CODE")
+        asm_final.append("Inicio:")
+        asm_final.append("\tmov Ax, @Data")
+        asm_final.append("\tmov Ds, Ax")
+        asm_final.extend(self.code_asm)
+        asm_final.append("\tmov ax, 4C00h")
+        asm_final.append("\tint 21h")
+        asm_final.append(".STACK")
+        asm_final.append("END Inicio")
+
+        with open(ruta_salida, "w", encoding="utf-8") as salida:
+            salida.write("\n".join(asm_final))
+
+        print(f"\n[ÉXITO] Archivo generado en: {os.path.abspath(ruta_salida)}")
+
+
+if __name__ == "__main__":
+    comp = CompiladorKimo()
+
+    ruta_origen = r"C:\Users\jimen\Documents\Codigos 6to\Automatas ll\Kimo\Compilador Kimo\programa.kimo"
+    ruta_destino = r"C:\Users\jimen\Documents\Codigos 6to\Automatas ll\Kimo\Compilador Kimo\salida.asm"
+
+    comp.compilar(ruta_origen, ruta_destino)
