@@ -14,12 +14,7 @@ class CompiladorKimo:
         self.data_asm = []
         self.code_asm = []
 
-        # Tabla de símbolos mínima:
-        # clave = ID, valor = TIPO
         self.tabla_simbolos = {}
-
-        # Tabla de errores en tiempo de edición:
-        # solo almacena código y línea
         self.errores_detectados = []
 
         self.en_bloque_variables = False
@@ -28,14 +23,11 @@ class CompiladorKimo:
         self.pila_bloques = []
         self.contador_ciclos = 0
         self.contador_mensajes = 0
+        self.contador_elevacion = 0
 
         self.definir_tabla_errores()
         self.definir_regex()
         self.preparar_estructura_base()
-
-    # =========================================================
-    # TABLA DE ERRORES
-    # =========================================================
 
     def definir_tabla_errores(self):
         self.tabla_errores = {
@@ -76,25 +68,17 @@ class CompiladorKimo:
             codigo = error["codigo"]
             linea = error["linea"]
             descripcion = self.tabla_errores.get(codigo, "Error no registrado.")
-
             print(f"Línea {linea} | {codigo} | {descripcion}")
 
-    # =========================================================
-    # EXPRESIONES REGULARES MODULARES
-    # =========================================================
-
     def definir_regex(self):
-        # -------------------------
-        # Átomos léxicos base
-        # -------------------------
-
-        self.ID = r"[A-Z0-9a-z_-]+"
+        self.ID = r"[A-Z0-9_-]+"
         self.ENTERO = r"[+-]?[0-9]+"
-        self.CADENA = r'"[^"]*"'
+        self.FLOAT = r"[+-]?[0-9]+\.[0-9]+"
+        self.CADENA = r'"[A-Z0-9\s+\-*/%^=><!;:,._@#$&]*"'
 
         self.TIPO = r"(?:ENT|FLOAT|CAD)"
         self.OP_REL = r"(?:>=|<=|==|!=|>|<)"
-        self.OP_ARIT = r"(?:\+|-|\*|/|%)"
+        self.OP_ARIT = r"(?:\+|-|\*|/|%|\^)"
 
         self.ESP = r"\s*"
         self.ESP_OBL = r"\s+"
@@ -120,56 +104,41 @@ class CompiladorKimo:
         self.OPERANDO_NUM = rf"(?:{self.ID}|{self.ENTERO})"
         self.EXP_IMPRIMIBLE = rf"(?:{self.ID}|{self.ENTERO}|{self.CADENA})"
 
-        # -------------------------
-        # RegEx atómicas compiladas
-        # -------------------------
-
         self.regex_id = re.compile(rf"^{self.ID}$")
         self.regex_entero = re.compile(rf"^{self.ENTERO}$")
+        self.regex_float = re.compile(rf"^{self.FLOAT}$")
         self.regex_cadena = re.compile(rf"^{self.CADENA}$")
 
-        # -------------------------
         # Producciones de Kimo
-        # -------------------------
-
         # <DECL> ::= <ID> : <TIPO> ;
         self.regex_declaracion = re.compile(
-        rf"^{self.ESP}({self.ID}){self.ESP}{self.DOSP}{self.ESP}({self.TIPO}){self.ESP}{self.PYC}$"
+            rf"^{self.ESP}({self.ID}){self.ESP}{self.DOSP}{self.ESP}({self.TIPO}){self.ESP}{self.PYC}$"
         )
-
         # <ENTRADA> ::= LEER ( <ID> ) ;
         self.regex_leer = re.compile(
             rf"^{self.ESP}{self.PR_LEER}{self.ESP}{self.PA}{self.ESP}({self.ID}){self.ESP}{self.PC}{self.ESP}{self.PYC}$"
         )
-
-        # <SALIDA> ::= IMPRIMIR ( <EXPRESION> ) ;
+        #<SALIDA> ::= IMPRIMIR ( <EXPRESION> ) ;
         self.regex_imprimir = re.compile(
             rf"^{self.ESP}{self.PR_IMPRIMIR}{self.ESP}{self.PA}{self.ESP}({self.EXP_IMPRIMIBLE}){self.ESP}{self.PC}{self.ESP}{self.PYC}$"
         )
-
         # <CONDICIONAL> ::= SI <EXPRESION> <OP_REL> <EXPRESION> ENTONCES
         self.regex_si = re.compile(
             rf"^{self.ESP}{self.PR_SI}{self.ESP_OBL}"
             rf"({self.OPERANDO_NUM}){self.ESP}({self.OP_REL}){self.ESP}({self.OPERANDO_NUM})"
             rf"{self.ESP_OBL}{self.PR_ENTONCES}$"
         )
-
         # <WHILE> ::= MIENTRAS <EXPRESION> <OP_REL> <EXPRESION> HACER
         self.regex_mientras = re.compile(
             rf"^{self.ESP}{self.PR_MIENTRAS}{self.ESP_OBL}"
             rf"({self.OPERANDO_NUM}){self.ESP}({self.OP_REL}){self.ESP}({self.OPERANDO_NUM})"
-             rf"{self.ESP_OBL}{self.PR_HACER}$"
+            rf"{self.ESP_OBL}{self.PR_HACER}$"
         )
-
         # <ASIGNACION> ::= <ID> = <EXPRESION> ;
         self.regex_asignacion = re.compile(
             rf"^{self.ESP}({self.ID}){self.ESP}{self.IGUAL}{self.ESP}(.+?){self.ESP}{self.PYC}$"
         )
 
-        # Alcance evaluable:
-        # A = B;
-        # A = 5;
-        # A = B + 5;
         self.regex_exp_num_simple = re.compile(
             rf"^({self.OPERANDO_NUM})(?:{self.ESP}({self.OP_ARIT}){self.ESP}({self.OPERANDO_NUM}))?$"
         )
@@ -182,10 +151,6 @@ class CompiladorKimo:
             "==": "JNE",
             "!=": "JE"
         }
-
-    # =========================================================
-    # ESTRUCTURA ASM
-    # =========================================================
 
     def preparar_estructura_base(self):
         self.macros_asm = [
@@ -208,15 +173,14 @@ class CompiladorKimo:
             "salto db 10,13,24h"
         ]
 
-    # =========================================================
-    # UTILIDADES
-    # =========================================================
-
     def es_id_valido(self, valor):
         return valor != "" and self.regex_id.match(valor) is not None
 
     def es_entero(self, valor):
         return self.regex_entero.match(valor) is not None
+
+    def es_float(self, valor):
+        return self.regex_float.match(valor) is not None
 
     def es_cadena(self, valor):
         return self.regex_cadena.match(valor) is not None
@@ -244,10 +208,6 @@ class CompiladorKimo:
 
         self.validar_variable(valor)
         return self.nombre_asm(valor)
-
-    # =========================================================
-    # GENERACIÓN DE CÓDIGO
-    # =========================================================
 
     def agregar_inicio(self):
         if self.inicio_encontrado:
@@ -500,6 +460,21 @@ class CompiladorKimo:
                 self.code_asm.append("\tdiv bx")
                 self.code_asm.append("\tmov ax, dx")
 
+            elif operador == "^":
+                etiqueta = self.contador_elevacion
+                self.contador_elevacion += 1
+
+                self.code_asm.append("\tmov bx, ax")
+                self.code_asm.append(f"\tmov cx, {self.operando_asm(op2)}")
+                self.code_asm.append("\tmov ax, 1")
+                self.code_asm.append(f"elevar_{etiqueta}:")
+                self.code_asm.append("\tcmp cx, 0")
+                self.code_asm.append(f"\tje fin_elevar_{etiqueta}")
+                self.code_asm.append("\tmul bx")
+                self.code_asm.append("\tdec cx")
+                self.code_asm.append(f"\tjmp elevar_{etiqueta}")
+                self.code_asm.append(f"fin_elevar_{etiqueta}:")
+
             else:
                 self.registrar_error("E017")
 
@@ -509,15 +484,11 @@ class CompiladorKimo:
             self.nombre_txt(destino)
         )
 
-    # =========================================================
-    # CICLO PRINCIPAL
-    # =========================================================
-
     def compilar(self, ruta_fuente, ruta_salida):
-        if not os.path.exists(ruta_fuente):
-            self.registrar_error("E000")
-
         try:
+            if not os.path.exists(ruta_fuente):
+                self.registrar_error("E000")
+
             with open(ruta_fuente, "r", encoding="utf-8") as archivo:
                 lineas = [linea.rstrip("\n") for linea in archivo.readlines()]
 
