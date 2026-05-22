@@ -234,11 +234,11 @@ class CompiladorKimo:
 
         if tipo == "ENT":
             self.data_asm.append(f"{self.nombre_asm(nombre)} dw 0")
-            self.data_asm.append(f"{self.nombre_txt(nombre)} db 4, ?, 5 dup(24h)")
+            self.data_asm.append(f"{self.nombre_txt(nombre)} db 6, ?, 7 dup(24h)")
 
         elif tipo == "FLOAT":
             self.data_asm.append(f"{self.nombre_asm(nombre)} dw 0 ; FLOAT limitado")
-            self.data_asm.append(f"{self.nombre_txt(nombre)} db 4, ?, 5 dup(24h)")
+            self.data_asm.append(f"{self.nombre_txt(nombre)} db 6, ?, 7 dup(24h)")
 
         elif tipo == "CAD":
             self.data_asm.append(f"{self.nombre_asm(nombre)} db 100, ?, 100 dup(24h)")
@@ -272,6 +272,10 @@ class CompiladorKimo:
             if tipo == "CAD":
                 self.code_asm.append(f"\tIMPRIMIR {self.nombre_asm(expresion)}+2")
             else:
+                self.generar_conversion_dinamica(
+                self.nombre_asm(expresion),
+                self.nombre_txt(expresion)
+                )
                 self.code_asm.append(f"\tIMPRIMIR {self.nombre_txt(expresion)}+2")
 
             self.code_asm.append("\tIMPRIMIR salto")
@@ -297,27 +301,74 @@ class CompiladorKimo:
             self.code_asm.append(f"\tLEER {self.nombre_asm(nombre)}")
             self.code_asm.append("\tIMPRIMIR salto")
         else:
-            self.code_asm.append(f"\tLEER {self.nombre_txt(nombre)}")
-            self.code_asm.append(f"\tmov al, {self.nombre_txt(nombre)}[2]")
-            self.code_asm.append("\tsub al, 30h")
-            self.code_asm.append("\tmov ah, 0")
-            self.code_asm.append(f"\tmov {self.nombre_asm(nombre)}, ax")
-            self.generar_conversion_dos_digitos(
-                self.nombre_asm(nombre),
-                self.nombre_txt(nombre)
-            )
+            nombre_txt = self.nombre_txt(nombre)
+            nombre_var = self.nombre_asm(nombre)
+            etiqueta = self.contador_mensajes
+            self.contador_mensajes += 1
+
+            self.code_asm.append(f"\tLEER {nombre_txt}")
+
+            self.code_asm.append("\txor ax, ax")
+            self.code_asm.append("\txor cx, cx")
+            self.code_asm.append(f"\tmov cl, {nombre_txt}[1]")
+            self.code_asm.append(f"\tmov si, offset {nombre_txt}")
+            self.code_asm.append("\tadd si, 2")
+
+            self.code_asm.append(f"leer_num_{etiqueta}:")
+            self.code_asm.append("\tcmp cl, 0")
+            self.code_asm.append(f"\tje fin_leer_num_{etiqueta}")
+            self.code_asm.append("\tmov bx, 10")
+            self.code_asm.append("\tmul bx")
+            self.code_asm.append("\tmov bl, [si]")
+            self.code_asm.append("\tsub bl, 30h")
+            self.code_asm.append("\tmov bh, 0")
+            self.code_asm.append("\tadd ax, bx")
+            self.code_asm.append("\tinc si")
+            self.code_asm.append("\tdec cl")
+            self.code_asm.append(f"\tjmp leer_num_{etiqueta}")
+
+            self.code_asm.append(f"fin_leer_num_{etiqueta}:")
+            self.code_asm.append(f"\tmov {nombre_var}, ax")
+
+            self.generar_conversion_dinamica(nombre_var, nombre_txt)
             self.code_asm.append("\tIMPRIMIR salto")
 
-    def generar_conversion_dos_digitos(self, nombre_var, nombre_txt):
+    def generar_conversion_dinamica(self, nombre_var, nombre_txt):
+        etiqueta = self.contador_mensajes
+        self.contador_mensajes += 1
+
         self.code_asm.append(f"\tmov ax, {nombre_var}")
+        self.code_asm.append(f"\tmov di, offset {nombre_txt}")
+        self.code_asm.append("\tadd di, 2")
+        self.code_asm.append("\tcmp ax, 0")
+        self.code_asm.append(f"\tjne convertir_num_{etiqueta}")
+
+        self.code_asm.append("\tmov byte ptr [di], '0'")
+        self.code_asm.append("\tinc di")
+        self.code_asm.append("\tmov byte ptr [di], 24h")
+        self.code_asm.append(f"\tjmp fin_convertir_num_{etiqueta}")
+
+        self.code_asm.append(f"convertir_num_{etiqueta}:")
+        self.code_asm.append("\txor cx, cx")
         self.code_asm.append("\tmov bx, 10")
+
+        self.code_asm.append(f"apilar_digitos_{etiqueta}:")
         self.code_asm.append("\txor dx, dx")
         self.code_asm.append("\tdiv bx")
-        self.code_asm.append("\tadd al, '0'")
-        self.code_asm.append("\tadd dl, '0'")
-        self.code_asm.append(f"\tmov {nombre_txt}[2], al")
-        self.code_asm.append(f"\tmov {nombre_txt}[3], dl")
-        self.code_asm.append(f"\tmov {nombre_txt}[4], 24h")
+        self.code_asm.append("\tpush dx")
+        self.code_asm.append("\tinc cx")
+        self.code_asm.append("\tcmp ax, 0")
+        self.code_asm.append(f"\tjne apilar_digitos_{etiqueta}")
+
+        self.code_asm.append(f"escribir_digitos_{etiqueta}:")
+        self.code_asm.append("\tpop dx")
+        self.code_asm.append("\tadd dl, 30h")
+        self.code_asm.append("\tmov [di], dl")
+        self.code_asm.append("\tinc di")
+        self.code_asm.append(f"\tloop escribir_digitos_{etiqueta}")
+
+        self.code_asm.append("\tmov byte ptr [di], 24h")
+        self.code_asm.append(f"fin_convertir_num_{etiqueta}:")
 
     def generar_comparacion(self, izq, operador, der, etiqueta_salida):
         self.code_asm.append(f"\tmov ax, {self.operando_asm(izq)}")
@@ -479,7 +530,7 @@ class CompiladorKimo:
                 self.registrar_error("E017")
 
         self.code_asm.append(f"\tmov {self.nombre_asm(destino)}, ax")
-        self.generar_conversion_dos_digitos(
+        self.generar_conversion_dinamica(
             self.nombre_asm(destino),
             self.nombre_txt(destino)
         )
