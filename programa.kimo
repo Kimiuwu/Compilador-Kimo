@@ -3,42 +3,101 @@ INICIO:
 INI_VAR
     A : ENT;
     B : ENT;
-    C : ENT;
+    CONT : ENT;
+    VALIDO : ENT;
     I : ENT;
-    TEXTO : CAD;
+    N : ENT;
+    P : ENT;
+    C : ENT;
+    R : ENT;
 FIN_VAR
 
-A = 5;
-B = 3;
-C = A + B;
-IMPRIMIR(C);
+CONT = 1;
+MIENTRAS CONT == 1 HACER
+    VALIDO = 0;
 
-C = A - B;
-IMPRIMIR(C);
+    MIENTRAS VALIDO == 0 HACER
+        IMPRIMIR("INGRESE A");
+        LEER(A);
 
-C = A * B;
-IMPRIMIR(C);
+        SI A <= 9 ENTONCES
+            VALIDO = 1;
+        FIN
 
-C = A / B;
-IMPRIMIR(C);
+        SI A > 9 ENTONCES
+            IMPRIMIR("A INVALIDO");
+        FIN
+    FINM
 
-C = A % B;
-IMPRIMIR(C);
+    SI A == 0 ENTONCES
+        CONT = 0;
+        IMPRIMIR("FIN");
+    FIN
 
+    SI A != 0 ENTONCES
+        VALIDO = 0;
 
+        MIENTRAS VALIDO == 0 HACER
+            IMPRIMIR("INGRESE B");
+            LEER(B);
 
-TEXTO = "HOLA KIMO";
-IMPRIMIR(TEXTO);
+            SI B <= 9 ENTONCES
+                VALIDO = 1;
+            FIN
 
-LEER(A);
-IMPRIMIR(A);
+            SI B > 9 ENTONCES
+                IMPRIMIR("B INVALIDO");
+            FIN
+        FINM
 
-SI A > B ENTONCES
-    IMPRIMIR("A ES MAYOR");
-    IMPRIMIR(A);
-FIN
+        SI B == 0 ENTONCES
+            CONT = 0;
+            IMPRIMIR("FIN");
+        FIN
 
-MIENTRAS A > 0 HACER
-    IMPRIMIR(A);
-    A = A - 1;
+        SI B != 0 ENTONCES
+            SI A > B ENTONCES
+                IMPRIMIR("POTENCIAS DE B");
+
+                I = 1;
+
+                MIENTRAS I <= A HACER
+                    P = B ^ I;
+                    IMPRIMIR(P);
+                    I = I + 1;
+                FINM
+            FIN
+
+            SI A < B ENTONCES
+                IMPRIMIR("CUBOS ENTRE A Y B");
+
+                N = A;
+
+                MIENTRAS N <= B HACER
+                    C = N ^ 3;
+                    IMPRIMIR(C);
+                    N = N + 1;
+                FINM
+            FIN
+
+            SI A == B ENTONCES
+                IMPRIMIR("PARES");
+
+                I = 1;
+                N = 1;
+
+                MIENTRAS I <= 10 HACER
+                    R = N % 2;
+                    SI R == 0 ENTONCES
+                        IMPRIMIR(N);
+                        I = I + 1;
+                    FIN
+                    N = N + 1;
+                FINM
+            FIN
+
+        FIN
+
+    FIN
+
 FINM
