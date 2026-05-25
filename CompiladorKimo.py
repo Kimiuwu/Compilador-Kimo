@@ -88,21 +88,25 @@ class CompiladorKimo:
         self.PYC = r";"
         self.DOSP = r":"
         self.IGUAL = r"="
-
+        #Lenguaje
         self.PR_INICIO = r"INICIO:"
         self.PR_INI_VAR = r"INI_VAR"
         self.PR_FIN_VAR = r"FIN_VAR"
         self.PR_LEER = r"LEER"
         self.PR_IMPRIMIR = r"IMPRIMIR"
         self.PR_SI = r"SI"
+        self.PR_SINO = r"SINO"
         self.PR_ENTONCES = r"ENTONCES"
         self.PR_FIN = r"FIN"
         self.PR_MIENTRAS = r"MIENTRAS"
         self.PR_HACER = r"HACER"
         self.PR_FINM = r"FINM"
+        self.PR_DESDE = r"DESDE"
+        self.PR_HASTA = r"HASTA"
 
         self.OPERANDO_NUM = rf"(?:{self.ID}|{self.ENTERO})"
         self.EXP_IMPRIMIBLE = rf"(?:{self.ID}|{self.ENTERO}|{self.CADENA})"
+        self.EXP_NUM_FOR = rf"(?:{self.OPERANDO_NUM}(?:{self.ESP}{self.OP_ARIT}{self.ESP}{self.OPERANDO_NUM})?)"
 
         self.regex_id = re.compile(rf"^{self.ID}$")
         self.regex_entero = re.compile(rf"^{self.ENTERO}$")
@@ -134,6 +138,14 @@ class CompiladorKimo:
             rf"({self.OPERANDO_NUM}){self.ESP}({self.OP_REL}){self.ESP}({self.OPERANDO_NUM})"
             rf"{self.ESP_OBL}{self.PR_HACER}$"
         )
+        # <FOR> ::= DESDE <ID> = <EXPRESION> HASTA <EXPRESION> HACER
+        self.regex_for = re.compile(
+            rf"^{self.ESP}{self.PR_DESDE}{self.ESP_OBL}"
+            rf"({self.ID}){self.ESP}{self.IGUAL}{self.ESP}({self.EXP_NUM_FOR})"
+            rf"{self.ESP_OBL}{self.PR_HASTA}{self.ESP_OBL}({self.EXP_NUM_FOR})"
+            rf"{self.ESP_OBL}{self.PR_HACER}$"
+        )
+
         # <ASIGNACION> ::= <ID> = <EXPRESION> ;
         self.regex_asignacion = re.compile(
             rf"^{self.ESP}({self.ID}){self.ESP}{self.IGUAL}{self.ESP}(.+?){self.ESP}{self.PYC}$"
@@ -197,10 +209,10 @@ class CompiladorKimo:
         return self.tabla_simbolos[nombre]
 
     def nombre_asm(self, nombre):
-        return f"var_{nombre}"
+        return f"V_{nombre}"
 
     def nombre_txt(self, nombre):
-        return f"txt_{nombre}"
+        return f"TXT_{nombre}"
 
     def operando_asm(self, valor):
         if self.es_entero(valor):
@@ -237,6 +249,7 @@ class CompiladorKimo:
             self.data_asm.append(f"{self.nombre_txt(nombre)} db 6, ?, 7 dup(24h)")
 
         elif tipo == "FLOAT":
+            # FLOAT se conserva a nivel de palabra entera por limitaciones del objetivo 8086 sin FPU.
             self.data_asm.append(f"{self.nombre_asm(nombre)} dw 0 ; FLOAT limitado")
             self.data_asm.append(f"{self.nombre_txt(nombre)} db 6, ?, 7 dup(24h)")
 
@@ -252,14 +265,14 @@ class CompiladorKimo:
         expresion = match.group(1).strip()
 
         if self.es_cadena(expresion):
-            nombre_msg = f"msg_{self.contador_mensajes}"
+            nombre_msg = f"MSJ_{self.contador_mensajes}"
             self.data_asm.append(f"{nombre_msg} db {expresion},24h")
             self.code_asm.append(f"\tIMPRIMIR {nombre_msg}")
             self.code_asm.append("\tIMPRIMIR salto")
             self.contador_mensajes += 1
 
         elif self.es_entero(expresion):
-            nombre_msg = f"msg_{self.contador_mensajes}"
+            nombre_msg = f"MSJ_{self.contador_mensajes}"
             self.data_asm.append(f'{nombre_msg} db "{expresion}",24h')
             self.code_asm.append(f"\tIMPRIMIR {nombre_msg}")
             self.code_asm.append("\tIMPRIMIR salto")
@@ -273,8 +286,8 @@ class CompiladorKimo:
                 self.code_asm.append(f"\tIMPRIMIR {self.nombre_asm(expresion)}+2")
             else:
                 self.generar_conversion_dinamica(
-                self.nombre_asm(expresion),
-                self.nombre_txt(expresion)
+                    self.nombre_asm(expresion),
+                    self.nombre_txt(expresion)
                 )
                 self.code_asm.append(f"\tIMPRIMIR {self.nombre_txt(expresion)}+2")
 
@@ -314,9 +327,9 @@ class CompiladorKimo:
             self.code_asm.append(f"\tmov si, offset {nombre_txt}")
             self.code_asm.append("\tadd si, 2")
 
-            self.code_asm.append(f"leer_num_{etiqueta}:")
+            self.code_asm.append(f"LEER_NUM_{etiqueta}:")
             self.code_asm.append("\tcmp cl, 0")
-            self.code_asm.append(f"\tje fin_leer_num_{etiqueta}")
+            self.code_asm.append(f"\tje FIN_LEER_NUM_{etiqueta}")
             self.code_asm.append("\tmov bx, 10")
             self.code_asm.append("\tmul bx")
             self.code_asm.append("\tmov bl, [si]")
@@ -325,9 +338,9 @@ class CompiladorKimo:
             self.code_asm.append("\tadd ax, bx")
             self.code_asm.append("\tinc si")
             self.code_asm.append("\tdec cl")
-            self.code_asm.append(f"\tjmp leer_num_{etiqueta}")
+            self.code_asm.append(f"\tjmp LEER_NUM_{etiqueta}")
 
-            self.code_asm.append(f"fin_leer_num_{etiqueta}:")
+            self.code_asm.append(f"FIN_LEER_NUM_{etiqueta}:")
             self.code_asm.append(f"\tmov {nombre_var}, ax")
 
             self.generar_conversion_dinamica(nombre_var, nombre_txt)
@@ -341,34 +354,34 @@ class CompiladorKimo:
         self.code_asm.append(f"\tmov di, offset {nombre_txt}")
         self.code_asm.append("\tadd di, 2")
         self.code_asm.append("\tcmp ax, 0")
-        self.code_asm.append(f"\tjne convertir_num_{etiqueta}")
+        self.code_asm.append(f"\tjne CONV_{etiqueta}")
 
         self.code_asm.append("\tmov byte ptr [di], '0'")
         self.code_asm.append("\tinc di")
         self.code_asm.append("\tmov byte ptr [di], 24h")
-        self.code_asm.append(f"\tjmp fin_convertir_num_{etiqueta}")
+        self.code_asm.append(f"\tjmp FIN_CONV_{etiqueta}")
 
-        self.code_asm.append(f"convertir_num_{etiqueta}:")
+        self.code_asm.append(f"CONV_{etiqueta}:")
         self.code_asm.append("\txor cx, cx")
         self.code_asm.append("\tmov bx, 10")
 
-        self.code_asm.append(f"apilar_digitos_{etiqueta}:")
+        self.code_asm.append(f"APILAR_DIG_{etiqueta}:")
         self.code_asm.append("\txor dx, dx")
         self.code_asm.append("\tdiv bx")
         self.code_asm.append("\tpush dx")
         self.code_asm.append("\tinc cx")
         self.code_asm.append("\tcmp ax, 0")
-        self.code_asm.append(f"\tjne apilar_digitos_{etiqueta}")
+        self.code_asm.append(f"\tjne APILAR_DIG_{etiqueta}")
 
-        self.code_asm.append(f"escribir_digitos_{etiqueta}:")
+        self.code_asm.append(f"ESCRIBIR_DIG_{etiqueta}:")
         self.code_asm.append("\tpop dx")
         self.code_asm.append("\tadd dl, 30h")
         self.code_asm.append("\tmov [di], dl")
         self.code_asm.append("\tinc di")
-        self.code_asm.append(f"\tloop escribir_digitos_{etiqueta}")
+        self.code_asm.append(f"\tloop ESCRIBIR_DIG_{etiqueta}")
 
         self.code_asm.append("\tmov byte ptr [di], 24h")
-        self.code_asm.append(f"fin_convertir_num_{etiqueta}:")
+        self.code_asm.append(f"FIN_CONV_{etiqueta}:")
 
     def generar_comparacion(self, izq, operador, der, etiqueta_salida):
         self.code_asm.append(f"\tmov ax, {self.operando_asm(izq)}")
@@ -385,15 +398,34 @@ class CompiladorKimo:
         operador = match.group(2)
         der = match.group(3)
 
-        etiqueta_fin = f"fin_if_{self.contador_ciclos}"
+        etiqueta_sino = f"SINO_{self.contador_ciclos}"
+        etiqueta_fin = f"FIN_SI_{self.contador_ciclos}"
         self.contador_ciclos += 1
 
-        self.generar_comparacion(izq, operador, der, etiqueta_fin)
+        self.generar_comparacion(izq, operador, der, etiqueta_sino)
 
         self.pila_bloques.append({
             "tipo": "SI",
-            "fin": etiqueta_fin
+            "sino": etiqueta_sino,
+            "fin": etiqueta_fin,
+            "tiene_sino": False
         })
+
+
+    def generar_sino(self):
+        if not self.pila_bloques:
+            self.registrar_error("E012")
+
+        bloque = self.pila_bloques.pop()
+
+        if bloque["tipo"] != "SI" or bloque.get("tiene_sino"):
+            self.registrar_error("E012")
+
+        self.code_asm.append(f"\tjmp {bloque['fin']}")
+        self.code_asm.append(f"{bloque['sino']}:")
+
+        bloque["tiene_sino"] = True
+        self.pila_bloques.append(bloque)
 
     def cerrar_fin(self):
         if not self.pila_bloques:
@@ -403,6 +435,9 @@ class CompiladorKimo:
 
         if bloque["tipo"] != "SI":
             self.registrar_error("E012")
+
+        if not bloque.get("tiene_sino"):
+            self.code_asm.append(f"{bloque['sino']}:")
 
         self.code_asm.append(f"{bloque['fin']}:")
 
@@ -416,8 +451,8 @@ class CompiladorKimo:
         operador = match.group(2)
         der = match.group(3)
 
-        etiqueta_inicio = f"while_{self.contador_ciclos}"
-        etiqueta_fin = f"fin_while_{self.contador_ciclos}"
+        etiqueta_inicio = f"MIENTRAS_{self.contador_ciclos}"
+        etiqueta_fin = f"FIN_MIENTRAS_{self.contador_ciclos}"
         self.contador_ciclos += 1
 
         self.code_asm.append(f"{etiqueta_inicio}:")
@@ -429,17 +464,41 @@ class CompiladorKimo:
             "fin": etiqueta_fin
         })
 
+    def generar_for(self, linea):
+        match = self.regex_for.match(linea)
+
+        if not match:
+            self.registrar_error("E001")
+
+        variable_control = match.group(1)
+        expresion_inicio = match.group(2)
+        expresion_fin = match.group(3)
+
+        self.validar_variable(variable_control)
+
+        if not self.regex_exp_num_simple.match(expresion_inicio):
+            self.registrar_error("E016")
+
+        if not self.regex_exp_num_simple.match(expresion_fin):
+            self.registrar_error("E016")
+
+        self.pila_bloques.append({
+            "tipo": "FOR"
+        })
+
     def cerrar_finm(self):
         if not self.pila_bloques:
             self.registrar_error("E013")
 
         bloque = self.pila_bloques.pop()
 
-        if bloque["tipo"] != "MIENTRAS":
+        if bloque["tipo"] == "MIENTRAS":
+            self.code_asm.append(f"\tjmp {bloque['inicio']}")
+            self.code_asm.append(f"{bloque['fin']}:")
+        elif bloque["tipo"] == "FOR":
+            pass
+        else:
             self.registrar_error("E013")
-
-        self.code_asm.append(f"\tjmp {bloque['inicio']}")
-        self.code_asm.append(f"{bloque['fin']}:")
 
     def generar_asignacion(self, linea):
         match = self.regex_asignacion.match(linea)
@@ -461,8 +520,8 @@ class CompiladorKimo:
             if not self.es_cadena(expresion):
                 self.registrar_error("E015")
 
-            nombre_temp = f"cad_temp_{self.contador_mensajes}"
-            etiqueta = f"copiar_cadena_{self.contador_mensajes}"
+            nombre_temp = f"CAD_TEMP_{self.contador_mensajes}"
+            etiqueta = f"COPIAR_CAD_{self.contador_mensajes}"
             self.contador_mensajes += 1
 
             self.data_asm.append(f"{nombre_temp} db {expresion},24h")
@@ -582,11 +641,17 @@ class CompiladorKimo:
                 elif self.regex_si.match(linea_limpia):
                     self.generar_si(linea_limpia)
 
+                elif token_inicial == "SINO":
+                    self.generar_sino()
+
                 elif token_inicial == "FIN":
                     self.cerrar_fin()
 
                 elif self.regex_mientras.match(linea_limpia):
                     self.generar_mientras(linea_limpia)
+
+                elif self.regex_for.match(linea_limpia):
+                    self.generar_for(linea_limpia)
 
                 elif token_inicial == "FINM":
                     self.cerrar_finm()
@@ -618,14 +683,14 @@ class CompiladorKimo:
 
         asm_final.extend(self.macros_asm)
         asm_final.append(".MODEL SMALL")
-        asm_final.extend(self.data_asm)
         asm_final.append(".CODE")
         asm_final.append("Inicio:")
-        asm_final.append("\tmov Ax, @Data")
-        asm_final.append("\tmov Ds, Ax")
+        asm_final.append("	mov Ax, @Data")
+        asm_final.append("	mov Ds, Ax")
         asm_final.extend(self.code_asm)
-        asm_final.append("\tmov ax, 4C00h")
-        asm_final.append("\tint 21h")
+        asm_final.append("	mov ax, 4C00h")
+        asm_final.append("	int 21h")
+        asm_final.extend(self.data_asm)
         asm_final.append(".STACK")
         asm_final.append("END Inicio")
 
